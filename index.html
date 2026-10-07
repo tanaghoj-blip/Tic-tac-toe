@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Tic-Tac-Toe</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: linear-gradient(135deg, #eef2ff, #f8fafc);
+    color: #111827;
+  }
+  .app { width: min(92vw, 620px); padding: 28px 18px; }
+  h1 { text-align: center; margin: 0 0 6px; font-size: clamp(2rem, 7vw, 3.2rem); }
+  .subtitle { text-align: center; color: #6b7280; margin: 0 0 22px; }
+  .card {
+    background: white; border-radius: 22px; padding: 22px;
+    box-shadow: 0 15px 45px rgba(15,23,42,.10);
+  }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  input, button {
+    border: 1px solid #d1d5db; border-radius: 12px; padding: 12px 14px;
+    font: inherit;
+  }
+  input { flex: 1; min-width: 0; text-transform: uppercase; letter-spacing: 2px; }
+  button { cursor: pointer; background: #111827; color: white; border: 0; font-weight: 700; }
+  button.secondary { background: #e5e7eb; color: #111827; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status {
+    margin: 18px 0; padding: 13px; border-radius: 12px;
+    background: #f3f4f6; text-align: center; font-weight: 700;
+  }
+  .room {
+    background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 14px;
+    padding: 14px; margin-bottom: 16px;
+  }
+  .room-code { font-size: 1.5rem; font-weight: 900; letter-spacing: 4px; }
+  .board {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    max-width: 420px; margin: 20px auto;
+  }
+  .cell {
+    aspect-ratio: 1; font-size: clamp(2.4rem, 13vw, 5rem);
+    display: grid; place-items: center; background: #f8fafc;
+    color: #111827; border: 2px solid #e5e7eb;
+  }
+  .cell:hover:not(:disabled) { background: #eef2ff; }
+  .you { text-align: center; color: #6b7280; }
+  .hidden { display: none; }
+  .rules { font-size: .92rem; color: #6b7280; line-height: 1.5; }
+  .tiny { font-size: .8rem; color: #9ca3af; margin-top: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<main class="app">
+  <h1>⭕ Tic-Tac-Toe ❌</h1>
+  <p class="subtitle">Two players. Two devices. One live game.</p>
+
+  <section class="card">
+    <div id="setup">
+      <div class="row">
+        <button id="createBtn">Create a game</button>
+        <input id="roomInput" maxlength="12" placeholder="ROOM CODE">
+        <button id="joinBtn" class="secondary">Join</button>
+      </div>
+      <p class="rules"><strong>Rules:</strong> Take turns placing your mark. Get three in a row horizontally, vertically, or diagonally to win. If all nine spaces are filled with no winner, it's a draw.</p>
+    </div>
+
+    <div id="game" class="hidden">
+      <div id="roomBox" class="room hidden">
+        <div>Share this room code with the other player:</div>
+        <div class="room-code" id="roomCode"></div>
+      </div>
+      <div id="you" class="you"></div>
+      <div id="status" class="status">Connecting…</div>
+      <div id="board" class="board"></div>
+      <div class="row">
+        <button id="newGameBtn" class="secondary">New round</button>
+        <button id="leaveBtn" class="secondary">Leave game</button>
+      </div>
+    </div>
+    <div class="tiny">Works in a browser on phones, tablets and computers.</div>
+  </section>
+</main>
+
+<script>
+let peer = null;
+let conn = null;
+let role = null;
+let symbol = null;
+let board = Array(9).fill("");
+let turn = "X";
+let gameOver = false;
+let roomCode = "";
+
+const $ = id => document.getElementById(id);
+const setup = $("setup"), game = $("game"), statusEl = $("status");
+const boardEl = $("board");
+
+function randomCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+function showGame() {
+  setup.classList.add("hidden");
+  game.classList.remove("hidden");
+  render();
+}
+
+function setStatus(text) { statusEl.textContent = text; }
+
+function render() {
+  $("you").textContent = symbol ? `You are ${symbol}` : "";
+  boardEl.innerHTML = "";
+  board.forEach((value, i) => {
+    const b = document.createElement("button");
+    b.className = "cell";
+    b.textContent = value;
+    b.disabled = !!value || gameOver || turn !== symbol || !conn || !conn.open;
+    b.addEventListener("click", () => move(i));
+    boardEl.appendChild(b);
+  });
+  if (!gameOver) {
+    setStatus(turn === symbol ? "Your turn" : "Waiting for the other player…");
+  }
+}
+
+function winner(b) {
+  const lines = [
+    [0,1,2],[3,4,5],[6,7,8],
+    [0,3,6],[1,4,7],[2,5,8],
+    [0,4,8],[2,4,6]
+  ];
+  for (const [a,c,d] of lines) {
+    if (b[a] && b[a] === b[c] && b[a] === b[d]) return b[a];
+  }
+  return null;
+}
+
+function finishMessage() {
+  const w = winner(board);
+  if (w) {
+    gameOver = true;
+    setStatus(w === symbol ? "🎉 You win!" : `🏆 ${w} wins!`);
+    render();
+    return true;
+  }
+  if (board.every(Boolean)) {
+    gameOver = true;
+    setStatus("It's a draw!");
+    render();
+    return true;
+  }
+  return false;
+}
+
+function move(i) {
+  if (gameOver || board[i] || turn !== symbol || !conn?.open) return;
+  board[i] = symbol;
+  turn = symbol === "X" ? "O" : "X";
+  conn.send({ type: "state", board, turn });
+  finishMessage();
+  render();
+}
+
+function resetRound(send = true) {
+  board = Array(9).fill("");
+  turn = "X";
+  gameOver = false;
+  if (send && conn?.open) conn.send({ type: "state", board, turn });
+  render();
+}
+
+function setupConnection(c) {
+  conn = c;
+  conn.on("open", () => {
+    showGame();
+    if (role === "host") {
+      $("roomBox").classList.remove("hidden");
+      $("roomCode").textContent = roomCode;
+      conn.send({ type: "state", board, turn });
+      setStatus("Connected! You are X.");
+    } else {
+      setStatus("Connected! You are O.");
+    }
+    render();
+  });
+  conn.on("data", msg => {
+    if (msg.type === "state") {
+      board = msg.board;
+      turn = msg.turn;
+      gameOver = false;
+      if (winner(board) || board.every(Boolean)) gameOver = true;
+      if (gameOver) {
+        const w = winner(board);
+        setStatus(w ? (w === symbol ? "🎉 You win!" : `🏆 ${w} wins!`) : "It's a draw!");
+      }
+      render();
+    }
+    if (msg.type === "reset") resetRound(false);
+  });
+  conn.on("close", () => {
+    setStatus("The other player disconnected.");
+    conn = null;
+    render();
+  });
+  conn.on("error", err => setStatus("Connection error: " + err.message));
+}
+
+$("createBtn").onclick = () => {
+  role = "host"; symbol = "X"; roomCode = randomCode();
+  peer = new Peer("ttt-" + roomCode.toLowerCase());
+  peer.on("open", () => {
+    showGame();
+    $("roomBox").classList.remove("hidden");
+    $("roomCode").textContent = roomCode;
+    setStatus("Room created. Waiting for player O…");
+    render();
+  });
+  peer.on("connection", c => {
+    if (conn?.open) { c.close(); return; }
+    setupConnection(c);
+  });
+  peer.on("error", e => setStatus("Could not create room. Try again."));
+};
+
+$("joinBtn").onclick = () => {
+  const code = $("roomInput").value.trim().toUpperCase();
+  if (!code) return alert("Enter the room code first.");
+  role = "guest"; symbol = "O";
+  peer = new Peer();
+  peer.on("open", () => {
+    const c = peer.connect("ttt-" + code.toLowerCase(), { reliable: true });
+    setupConnection(c);
+  });
+  peer.on("error", () => setStatus("Could not find that room. Check the code and try again."));
+  showGame();
+  setStatus("Connecting to room…");
+};
+
+$("newGameBtn").onclick = () => {
+  if (confirm("Start a new round for both players?")) {
+    resetRound(true);
+    if (conn?.open) conn.send({ type: "reset" });
+  }
+};
+
+$("leaveBtn").onclick = () => location.reload();
+</script>
+</body>
+</html>
